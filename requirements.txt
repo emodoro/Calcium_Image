@@ -1,0 +1,20 @@
+# Dependencias para Panel de Inteligencia - Imagen de Calcio
+
+# Framework principal
+streamlit>=1.28.0
+
+# Análisis de datos
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Procesamiento de señales
+scipy>=1.10.0
+
+# Visualizaciones interactivas
+plotly>=5.17.0
+
+# Utilidades adicionales
+python-dateutil>=2.8.2
+
+# Opcional: Para mejor rendimiento
+# pyarrow>=12.0.0

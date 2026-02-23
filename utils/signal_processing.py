@@ -1,0 +1,314 @@
+"""
+Módulo para procesamiento de señales de calcio.
+Implementa algoritmos de suavizado, detección de eventos y cálculo de métricas.
+"""
+
+import numpy as np
+import pandas as pd
+from scipy import signal
+from scipy.integrate import trapezoid
+from config import *
+
+
+class SignalProcessor:
+    """
+    Clase para procesar señales de imagen de calcio.
+    Implementa suavizado, detección robusta de eventos y cálculo de métricas.
+    """
+    
+    def __init__(self, signal_data, time_array):
+        """
+        Inicializa el procesador de señales.
+        
+        Args:
+            signal_data (np.ndarray): Array con datos de señal
+            time_array (np.ndarray): Array con puntos de tiempo
+        """
+        self.original_signal = signal_data
+        self.time = time_array
+        self.smoothed_signal = None
+        self.event_mask = None
+        
+    def apply_savgol_filter(self, window=SG_WINDOW, polyorder=SG_POLYORDER):
+        """
+        Aplica filtro Savitzky-Golay para suavizar la señal.
+        
+        Args:
+            window (int): Tamaño de ventana (debe ser impar)
+            polyorder (int): Orden del polinomio de ajuste
+            
+        Returns:
+            np.ndarray: Señal suavizada
+        """
+        # Asegurar que window es impar
+        if window % 2 == 0:
+            window += 1
+        
+        self.smoothed_signal = signal.savgol_filter(
+            self.original_signal, 
+            window_length=window, 
+            polyorder=polyorder
+        )
+        
+        return self.smoothed_signal
+    
+    def robust_event_detection(self, 
+                               w=SIGNAL_WINDOW, 
+                               k_up=K_UP, 
+                               k_down=K_DOWN,
+                               influence=INFLUENCE,
+                               use_smoothed=True,
+                               run_min=RUN_MIN,
+                               adyacent_pre_points=5,
+                               adyacent_post_points=5):
+        """
+        Detección robusta de eventos usando baseline móvil y umbrales adaptativos.
+        
+        Args:
+            w (int): Ventana para baseline móvil
+            k_up (float): Factor umbral para eventos de subida
+            k_down (float): Factor umbral para eventos de bajada
+            influence (float): Influencia del nuevo valor en baseline (0-1)
+            use_smoothed (bool): Si True, usa señal suavizada
+            run_min (int): Puntos mínimos para unir eventos fragmentados
+            adyacent_pre_points (int): Puntos previos a evaluar para extender eventos
+            adyacent_post_points (int): Puntos posteriores a evaluar para extender eventos
+            
+        Returns:
+            tuple: (event_mask, baseline, std_dev) donde:
+                - event_mask: Array con 1=subida, -1=bajada, 0=sin evento
+                - baseline: Array con baseline móvil
+                - std_dev: Array con desviación estándar móvil
+        """
+        # Seleccionar señal a procesar
+        if use_smoothed and self.smoothed_signal is not None:
+            x = self.smoothed_signal.copy()
+        else:
+            x = self.original_signal.copy()
+        
+        N = len(x)
+        event_mask = np.zeros(N)
+        x_filtered = x[:w].copy()
+        baseline_array = np.zeros(N)
+        std_array = np.zeros(N)
+        
+        # Calcular baseline y desviación inicial (robusto con mediana)
+        baseline = np.nanmedian(x_filtered)
+        std_dev = np.nanmedian(np.abs(x_filtered - baseline)) / 0.6745  # MAD
+        
+        baseline_array[:w] = baseline
+        std_array[:w] = std_dev
+        
+        # Detección con histéresis
+        for i in range(w, N):
+            difference = x[i] - baseline
+            
+            # Detectar evento de subida
+            if (difference > k_up * std_dev and difference > 0) or \
+               (difference > 0 and event_mask[i-1] == 1):
+                event_mask[i] = 1
+                x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
+            
+            # Detectar evento de bajada
+            elif (difference < -k_down * std_dev and difference < 0) or \
+                 (difference < 0 and event_mask[i-1] == -1):
+                event_mask[i] = -1
+                x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
+            
+            # Sin evento
+            else:
+                event_mask[i] = 0
+                x_filtered = np.append(x_filtered, x[i])
+            
+            # Unir eventos cercanos
+            if i > w + run_min:
+                if event_mask[i] == 1 and np.sum(event_mask[i-run_min:i-1] == 1) > 0.8 * run_min:
+                    event_mask[i-run_min:i] = 1
+                elif event_mask[i] == -1 and np.sum(event_mask[i-run_min:i-1] == -1) > 0.8 * run_min:
+                    event_mask[i-run_min:i] = -1
+            
+            # Actualizar baseline y std móvil
+            x_filtered = x_filtered[-w:]
+            baseline = np.nanmedian(x_filtered)
+            mad = np.nanmedian(np.abs(x_filtered - baseline))
+            std_dev = 1.4826 * mad
+            
+            baseline_array[i] = baseline
+            std_array[i] = std_dev
+        
+        # Refinar eventos: extender hacia atrás si puntos previos son consistentes
+        puntos_previos = 5
+        cambios = True
+        while cambios:
+            cambios = False
+            for i in range(1, len(event_mask) - 1):
+                if event_mask[i] == 1 and (np.sum(x[i-puntos_previos:i] <= x[i]) >= 0.8 * puntos_previos):
+                    if event_mask[i-1] != 1:
+                        event_mask[i-1] = 1
+                        cambios = True
+                elif event_mask[i] == -1 and (np.sum(x[i-puntos_previos:i] >= x[i]) >= 0.8 * puntos_previos):
+                    if event_mask[i-1] != -1:
+                        event_mask[i-1] = -1
+                        cambios = True
+        
+        # Llenar huecos pequeños entre eventos del mismo tipo
+        for i in range(adyacent_pre_points, len(event_mask) - adyacent_post_points - 1):
+            if event_mask[i] == 0 and \
+               np.any(event_mask[i-adyacent_pre_points:i] == 1) and \
+               np.any(event_mask[i+1:i+1+adyacent_post_points] == 1):
+                event_mask[i] = 1
+            elif event_mask[i] == 0 and \
+                 np.any(event_mask[i-adyacent_pre_points:i] == -1) and \
+                 np.any(event_mask[i+1:i+1+adyacent_post_points] == -1):
+                event_mask[i] = -1
+        
+        self.event_mask = event_mask
+        return event_mask, baseline_array, std_array
+    
+    def calculate_derivative(self):
+        """
+        Calcula la derivada de la señal suavizada.
+        
+        Returns:
+            np.ndarray: Derivada temporal de la señal
+        """
+        if self.smoothed_signal is None:
+            self.apply_savgol_filter()
+        
+        return np.gradient(self.smoothed_signal, self.time)
+    
+    def detect_event_bounds(self, event_mask=None):
+        """
+        Detecta los límites (inicio y fin) de cada evento en la máscara.
+        
+        Args:
+            event_mask (np.ndarray, optional): Máscara de eventos. Si None, usa la calculada.
+            
+        Returns:
+            dict: Diccionario con 'up_start', 'up_end', 'down_start', 'down_end'
+        """
+        if event_mask is None:
+            event_mask = self.event_mask
+        
+        if event_mask is None:
+            raise ValueError("No hay máscara de eventos. Ejecuta robust_event_detection() primero.")
+        
+        # Eventos de subida
+        up_events = event_mask > 0
+        up_starts = []
+        up_ends = []
+        
+        # Eventos de bajada
+        down_events = event_mask < 0
+        down_starts = []
+        down_ends = []
+        
+        # Detectar transiciones
+        in_up_event = False
+        in_down_event = False
+        
+        for i in range(1, len(event_mask)):
+            # Eventos de subida
+            if up_events[i] and not up_events[i-1]:  # Inicio de subida
+                up_starts.append(self.time[i])
+                in_up_event = True
+            elif not up_events[i] and up_events[i-1]:  # Fin de subida
+                up_ends.append(self.time[i-1])
+                in_up_event = False
+            
+            # Eventos de bajada
+            if down_events[i] and not down_events[i-1]:  # Inicio de bajada
+                down_starts.append(self.time[i])
+                in_down_event = True
+            elif not down_events[i] and down_events[i-1]:  # Fin de bajada
+                down_ends.append(self.time[i-1])
+                in_down_event = False
+        
+        # Cerrar eventos que llegan hasta el final
+        if in_up_event:
+            up_ends.append(self.time[-1])
+        if in_down_event:
+            down_ends.append(self.time[-1])
+        
+        return {
+            'up_start': up_starts,
+            'up_end': up_ends,
+            'down_start': down_starts,
+            'down_end': down_ends
+        }
+
+
+def calculate_stimulus_metrics(signal_data, time_array, event_mask, 
+                               stimulus_start, stimulus_end, next_stimulus_start=None):
+    """
+    Calcula métricas para un estímulo específico.
+    
+    Args:
+        signal_data (np.ndarray): Datos de señal
+        time_array (np.ndarray): Array de tiempo
+        event_mask (np.ndarray): Máscara de eventos
+        stimulus_start (float): Tiempo de inicio del estímulo
+        stimulus_end (float): Tiempo de fin del estímulo
+        next_stimulus_start (float, optional): Inicio del siguiente estímulo
+        
+    Returns:
+        dict: Diccionario con métricas calculadas
+    """
+    # Determinar fin efectivo: hasta el siguiente estímulo o hasta el final
+    effective_end = next_stimulus_start if next_stimulus_start is not None else time_array[-1]
+    
+    # Encontrar primer evento de subida después del inicio del estímulo
+    start_indices = np.where((time_array >= stimulus_start) & 
+                            (time_array <= effective_end) & 
+                            (event_mask == 1))[0]
+    
+    if len(start_indices) > 0:
+        start_idx = start_indices[0]
+    else:
+        start_idx = np.where(time_array >= stimulus_start)[0][0]
+    
+    # Encontrar último evento de bajada antes del siguiente estímulo
+    end_indices = np.where((time_array <= effective_end) & (event_mask == -1))[0]
+    
+    if len(end_indices) > 0:
+        end_idx = end_indices[-1]
+    else:
+        end_idx = np.where(time_array <= effective_end)[0][-1]
+    
+    # Extraer segmento de señal
+    signal_segment = signal_data[start_idx:end_idx+1]
+    time_segment = time_array[start_idx:end_idx+1]
+    
+    # Calcular baseline local (línea recta entre inicio y fin)
+    baseline_local = np.linspace(signal_segment[0], signal_segment[-1], len(signal_segment))
+    
+    # Señal corregida
+    signal_corrected = signal_segment - baseline_local
+    
+    # Calcular métricas
+    area_total = trapezoid(signal_corrected, time_segment)
+    
+    # Área en el primer minuto
+    one_min_indices = int(1 / (time_array[1] - time_array[0]))
+    area_1min = trapezoid(
+        signal_corrected[:one_min_indices], 
+        time_segment[:one_min_indices]
+    ) if len(signal_corrected) > one_min_indices else area_total
+    
+    # Máximo
+    max_value = np.max(signal_corrected)
+    
+    # Duración
+    duration = time_segment[-1] - time_segment[0]
+    
+    return {
+        'start_time': time_segment[0],
+        'end_time': time_segment[-1],
+        'duration': duration,
+        'area_total': area_total,
+        'area_1min': area_1min,
+        'max_value': max_value,
+        'signal_corrected': signal_corrected,
+        'time_corrected': time_segment,
+        'baseline_local': baseline_local
+    }
