@@ -50,5 +50,8 @@ desktop.ini
 *.log
 
 # Archivos de datos personales (opcional)
+Experimentos/
+
+# Archivos de datos personales (opcional)
 # Experimentos/*
 # !Experimentos/ID002_A_002/
