@@ -87,6 +87,12 @@ class SignalProcessor:
             x = self.original_signal.copy()
         
         N = len(x)
+        
+        # Validar tamaño mínimo
+        if N < w * 2:
+            # Señal muy corta, retornar arrays vacíos
+            return np.zeros(N), np.zeros(N), np.zeros(N)
+        
         event_mask = np.zeros(N)
         x_filtered = x[:w].copy()
         baseline_array = np.zeros(N)
@@ -252,63 +258,93 @@ def calculate_stimulus_metrics(signal_data, time_array, event_mask,
         next_stimulus_start (float, optional): Inicio del siguiente estímulo
         
     Returns:
-        dict: Diccionario con métricas calculadas
+        dict: Diccionario con métricas calculadas, o None si no hay datos válidos
     """
-    # Determinar fin efectivo: hasta el siguiente estímulo o hasta el final
-    effective_end = next_stimulus_start if next_stimulus_start is not None else time_array[-1]
+    try:
+        # Determinar fin efectivo: hasta el siguiente estímulo o hasta el final
+        effective_end = next_stimulus_start if next_stimulus_start is not None else time_array[-1]
+        
+        # Verificar que el rango temporal es válido
+        valid_time_range = np.where((time_array >= stimulus_start) & (time_array <= effective_end))[0]
+        if len(valid_time_range) == 0:
+            # No hay puntos en el rango temporal
+            return None
+        
+        # Encontrar primer evento de subida después del inicio del estímulo
+        start_indices = np.where((time_array >= stimulus_start) & 
+                                (time_array <= effective_end) & 
+                                (event_mask == 1))[0]
+        
+        if len(start_indices) > 0:
+            start_idx = start_indices[0]
+        else:
+            # Si no hay eventos de subida, usar el inicio del rango temporal
+            fallback_start = np.where(time_array >= stimulus_start)[0]
+            if len(fallback_start) == 0:
+                return None
+            start_idx = fallback_start[0]
+        
+        # Encontrar último evento de bajada antes del siguiente estímulo
+        end_indices = np.where((time_array <= effective_end) & (event_mask == -1))[0]
+        
+        if len(end_indices) > 0:
+            end_idx = end_indices[-1]
+        else:
+            # Si no hay eventos de bajada, usar el fin del rango temporal
+            fallback_end = np.where(time_array <= effective_end)[0]
+            if len(fallback_end) == 0:
+                return None
+            end_idx = fallback_end[-1]
+        
+        # Verificar que tenemos un rango válido
+        if start_idx >= end_idx or start_idx >= len(signal_data) or end_idx >= len(signal_data):
+            return None
+        
+        # Extraer segmento de señal
+        signal_segment = signal_data[start_idx:end_idx+1]
+        time_segment = time_array[start_idx:end_idx+1]
+        
+        # Verificar que tenemos datos
+        if len(signal_segment) < 2 or len(time_segment) < 2:
+            return None
+        
+        # Calcular baseline local (línea recta entre inicio y fin)
+        baseline_local = np.linspace(signal_segment[0], signal_segment[-1], len(signal_segment))
+        
+        # Señal corregida
+        signal_corrected = signal_segment - baseline_local
+        
+        # Calcular métricas
+        area_total = trapezoid(signal_corrected, time_segment)
+        
+        # Área en el primer minuto
+        try:
+            one_min_indices = int(1 / (time_array[1] - time_array[0]))
+            area_1min = trapezoid(
+                signal_corrected[:one_min_indices], 
+                time_segment[:one_min_indices]
+            ) if len(signal_corrected) > one_min_indices else area_total
+        except:
+            area_1min = area_total
+        
+        # Máximo
+        max_value = np.max(signal_corrected)
+        
+        # Duración
+        duration = time_segment[-1] - time_segment[0]
+        
+        return {
+            'start_time': time_segment[0],
+            'end_time': time_segment[-1],
+            'duration': duration,
+            'area_total': area_total,
+            'area_1min': area_1min,
+            'max_value': max_value,
+            'signal_corrected': signal_corrected,
+            'time_corrected': time_segment,
+            'baseline_local': baseline_local
+        }
     
-    # Encontrar primer evento de subida después del inicio del estímulo
-    start_indices = np.where((time_array >= stimulus_start) & 
-                            (time_array <= effective_end) & 
-                            (event_mask == 1))[0]
-    
-    if len(start_indices) > 0:
-        start_idx = start_indices[0]
-    else:
-        start_idx = np.where(time_array >= stimulus_start)[0][0]
-    
-    # Encontrar último evento de bajada antes del siguiente estímulo
-    end_indices = np.where((time_array <= effective_end) & (event_mask == -1))[0]
-    
-    if len(end_indices) > 0:
-        end_idx = end_indices[-1]
-    else:
-        end_idx = np.where(time_array <= effective_end)[0][-1]
-    
-    # Extraer segmento de señal
-    signal_segment = signal_data[start_idx:end_idx+1]
-    time_segment = time_array[start_idx:end_idx+1]
-    
-    # Calcular baseline local (línea recta entre inicio y fin)
-    baseline_local = np.linspace(signal_segment[0], signal_segment[-1], len(signal_segment))
-    
-    # Señal corregida
-    signal_corrected = signal_segment - baseline_local
-    
-    # Calcular métricas
-    area_total = trapezoid(signal_corrected, time_segment)
-    
-    # Área en el primer minuto
-    one_min_indices = int(1 / (time_array[1] - time_array[0]))
-    area_1min = trapezoid(
-        signal_corrected[:one_min_indices], 
-        time_segment[:one_min_indices]
-    ) if len(signal_corrected) > one_min_indices else area_total
-    
-    # Máximo
-    max_value = np.max(signal_corrected)
-    
-    # Duración
-    duration = time_segment[-1] - time_segment[0]
-    
-    return {
-        'start_time': time_segment[0],
-        'end_time': time_segment[-1],
-        'duration': duration,
-        'area_total': area_total,
-        'area_1min': area_1min,
-        'max_value': max_value,
-        'signal_corrected': signal_corrected,
-        'time_corrected': time_segment,
-        'baseline_local': baseline_local
-    }
+    except Exception as e:
+        # Si hay cualquier error, retornar None
+        return None

@@ -296,7 +296,8 @@ def calculate_all_metrics(loader, processed_signals, config):
         
         # Iterar sobre estímulos
         for idx, stim_row in loader.stimuli_data.iterrows():
-            stimulus_name = stim_row.iloc[0]
+            # Usar columna 'Stimuli' si existe, sino primera columna
+            stimulus_name = stim_row['Stimuli'] if 'Stimuli' in stim_row else stim_row.iloc[0]
             stimulus_start = stim_row['inicio']
             stimulus_end = stim_row['fin']
             
@@ -319,19 +320,43 @@ def calculate_all_metrics(loader, processed_signals, config):
                     next_start
                 )
                 
-                # Agregar a resultados
+                # Solo agregar si hay métricas válidas
+                if metrics is not None:
+                    results.append({
+                        'ROI': roi_name,
+                        'Stimuli': stimulus_name,
+                        'start_time': metrics['start_time'],
+                        'end_time': metrics['end_time'],
+                        'duration': metrics['duration'],
+                        'area_total': metrics['area_total'],
+                        'area_1min': metrics['area_1min'],
+                        'max_value': metrics['max_value']
+                    })
+                else:
+                    # No se pudo calcular métricas (sin eventos detectados)
+                    # Agregar fila con valores NaN
+                    results.append({
+                        'ROI': roi_name,
+                        'Stimuli': stimulus_name,
+                        'start_time': np.nan,
+                        'end_time': np.nan,
+                        'duration': 0.0,
+                        'area_total': 0.0,
+                        'area_1min': 0.0,
+                        'max_value': 0.0
+                    })
+            except Exception as e:
+                # Error inesperado - agregar valores NaN
                 results.append({
                     'ROI': roi_name,
                     'Stimuli': stimulus_name,
-                    'start_time': metrics['start_time'],
-                    'end_time': metrics['end_time'],
-                    'duration': metrics['duration'],
-                    'area_total': metrics['area_total'],
-                    'area_1min': metrics['area_1min'],
-                    'max_value': metrics['max_value']
+                    'start_time': np.nan,
+                    'end_time': np.nan,
+                    'duration': 0.0,
+                    'area_total': 0.0,
+                    'area_1min': 0.0,
+                    'max_value': 0.0
                 })
-            except Exception as e:
-                st.warning(f"Error calculando métricas para {roi_name} - {stimulus_name}: {str(e)}")
             
             current_iteration += 1
             progress_bar.progress(current_iteration / total_iterations)
@@ -339,7 +364,31 @@ def calculate_all_metrics(loader, processed_signals, config):
     status_text.empty()
     progress_bar.empty()
     
-    return pd.DataFrame(results)
+    # Crear DataFrame y mostrar resumen
+    results_df = pd.DataFrame(results)
+    
+    # Contar ROIs sin eventos detectados
+    if len(results_df) > 0:
+        invalid_rows = results_df[results_df['duration'] == 0].shape[0]
+        total_rows = len(results_df)
+        if invalid_rows > 0:
+            st.info(f"""
+            ℹ️ **Nota sobre la detección de eventos:**
+            
+            - Total de análisis: {total_rows}
+            - Con eventos detectados: {total_rows - invalid_rows}
+            - Sin eventos detectados: {invalid_rows}
+            
+            Algunas ROIs no mostraron eventos claros en ciertos estímulos. 
+            Esto puede deberse a:
+            - Células poco reactivas
+            - Parámetros de detección muy estrictos
+            - Ruido alto en la señal
+            
+            💡 **Sugerencia**: Ajusta los parámetros de detección en el menú lateral si crees que hay falsos negativos.
+            """)
+    
+    return results_df
 
 
 # ========== FUNCIÓN PRINCIPAL ==========

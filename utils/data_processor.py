@@ -89,14 +89,21 @@ class CalciumDataLoader:
         
         try:
             # Leer archivo .csv con configuración específica
+            # Usamos index_col=0 para que la primera columna (nombres) sea el índice
             self.stimuli_data = pd.read_csv(
                 self.csv_path, 
                 sep=CSV_SEPARATOR, 
-                decimal=CSV_DECIMAL
+                decimal=CSV_DECIMAL,
+                index_col=0
             )
             
             # Convertir nombres de estímulos a mayúsculas para consistencia
-            self.stimuli_data.iloc[:, 0] = self.stimuli_data.iloc[:, 0].str.upper()
+            # Los nombres ahora están en el índice
+            self.stimuli_data.index = self.stimuli_data.index.str.upper()
+            
+            # Resetear índice para tener los nombres como una columna regular
+            self.stimuli_data = self.stimuli_data.reset_index()
+            self.stimuli_data.columns = ['Stimuli', 'inicio', 'fin']
             
             return self.stimuli_data
             
@@ -173,7 +180,8 @@ class CalciumDataLoader:
         for index, row in self.stimuli_data.iterrows():
             start_time = row['inicio']
             end_time = row['fin']
-            stimulus_name = row.iloc[0]
+            # Usar columna 'Stimuli' si existe, sino primera columna
+            stimulus_name = row['Stimuli'] if 'Stimuli' in row else row.iloc[0]
             
             # Crear máscara individual: 1 fuera del estímulo, 0 dentro
             mask = np.ones(len(self.data))
@@ -202,7 +210,7 @@ class CalciumDataLoader:
             'num_timepoints': len(self.time_array),
             'sampling_rate_hz': 1 / (np.mean(np.diff(self.time_array)) * 60),  # Aproximado
             'num_stimuli': len(self.stimuli_data) if self.stimuli_data is not None else 0,
-            'stimuli_names': self.stimuli_data.iloc[:, 0].tolist() if self.stimuli_data is not None else []
+            'stimuli_names': self.stimuli_data['Stimuli'].tolist() if self.stimuli_data is not None and 'Stimuli' in self.stimuli_data.columns else (self.stimuli_data.iloc[:, 0].tolist() if self.stimuli_data is not None else [])
         }
         
         return summary

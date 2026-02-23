@@ -425,12 +425,14 @@ def render_eda_section(config, plotter):
                 event_mask = proc['event_mask']
                 baseline = proc['baseline']
                 std_dev = proc['std_dev']
+                stimuli = st.session_state.stimuli_data
                 
                 # Gráfico de detección
                 fig = plotter.plot_event_detection(
                     time, signal, event_mask, baseline, std_dev,
                     k_up=config['k_up'], k_down=config['k_down'],
-                    roi_name=selected_roi
+                    roi_name=selected_roi,
+                    stimuli_data=stimuli
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 

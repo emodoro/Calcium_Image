@@ -44,8 +44,17 @@ class CalciumPlotter:
         ))
         
         # Agregar zonas de estímulos
-        for i, (idx, row) in enumerate(stimuli_data.iterrows()):
-            stimulus_name = row.iloc[0]
+        for i in range(len(stimuli_data)):
+            row = stimuli_data.iloc[i]
+            
+            # Obtener nombre del estímulo
+            if 'Stimuli' in stimuli_data.columns:
+                stimulus_name = str(row['Stimuli'])
+            elif stimuli_data.columns[0] not in ['inicio', 'fin']:
+                stimulus_name = str(row.iloc[0])
+            else:
+                stimulus_name = f"Estímulo {i+1}"
+            
             start_time = row['inicio']
             end_time = row['fin']
             color = STIMULUS_COLORS[i % len(STIMULUS_COLORS)]
@@ -129,7 +138,7 @@ class CalciumPlotter:
     
     @staticmethod
     def plot_event_detection(time, signal, event_mask, baseline, std_dev, 
-                            k_up=1.65, k_down=1.65, roi_name="ROI"):
+                            k_up=1.65, k_down=1.65, roi_name="ROI", stimuli_data=None):
         """
         Visualiza detección de eventos con umbrales adaptativos.
         
@@ -142,6 +151,7 @@ class CalciumPlotter:
             k_up (float): Factor umbral superior
             k_down (float): Factor umbral inferior
             roi_name (str): Nombre de la ROI
+            stimuli_data (pd.DataFrame, optional): DataFrame con información de estímulos
             
         Returns:
             plotly.graph_objects.Figure: Figura de Plotly
@@ -224,6 +234,96 @@ class CalciumPlotter:
                     fillcolor="red", opacity=0.2,
                     layer="below", line_width=0,
                     row=2, col=1
+                )
+        
+        # --- AHORA agregar bandas de estímulos DESPUÉS de las trazas ---
+        if stimuli_data is not None:
+            print(f"DEBUG: Procesando {len(stimuli_data)} estímulos")
+            print(f"DEBUG: Columnas del DataFrame: {stimuli_data.columns.tolist()}")
+            print(f"DEBUG: Rango de tiempo: {time[0]:.2f} a {time[-1]:.2f}")
+            
+            for i in range(len(stimuli_data)):
+                row = stimuli_data.iloc[i]
+                
+                # Obtener nombre del estímulo
+                if 'Stimuli' in stimuli_data.columns:
+                    stimulus_name = str(row['Stimuli'])
+                elif stimuli_data.columns[0] not in ['inicio', 'fin']:
+                    stimulus_name = str(row.iloc[0])
+                else:
+                    stimulus_name = f"Estímulo {i+1}"
+                
+                start_time = row['inicio']
+                end_time = row['fin']
+                color = STIMULUS_COLORS[i % len(STIMULUS_COLORS)]
+                
+                print(f"DEBUG: Estímulo {i}: '{stimulus_name}' - Inicio: {start_time}, Fin: {end_time}, Color: {color}")
+                
+                # Banda vertical completa en subplot 1 (señal y umbrales)
+                fig.add_vrect(
+                    x0=start_time,
+                    x1=end_time,
+                    fillcolor=color,
+                    opacity=0.3,
+                    line_width=0,
+                    row=1, col=1
+                )
+                
+                # Banda vertical completa en subplot 2 (eventos detectados)
+                fig.add_vrect(
+                    x0=start_time,
+                    x1=end_time,
+                    fillcolor=color,
+                    opacity=0.3,
+                    line_width=0,
+                    row=2, col=1
+                )
+                
+                # Líneas verticales delimitadoras en subplot 1
+                fig.add_vline(
+                    x=start_time,
+                    line_width=2,
+                    line_dash="dash",
+                    line_color=color,
+                    opacity=0.8,
+                    row=1, col=1
+                )
+                fig.add_vline(
+                    x=end_time,
+                    line_width=2,
+                    line_dash="dash",
+                    line_color=color,
+                    opacity=0.8,
+                    row=1, col=1
+                )
+                
+                # Líneas verticales delimitadoras en subplot 2
+                fig.add_vline(
+                    x=start_time,
+                    line_width=2,
+                    line_dash="dash",
+                    line_color=color,
+                    opacity=0.8,
+                    row=2, col=1
+                )
+                fig.add_vline(
+                    x=end_time,
+                    line_width=2,
+                    line_dash="dash",
+                    line_color=color,
+                    opacity=0.8,
+                    row=2, col=1
+                )
+                
+                # Anotación del estímulo en subplot 1
+                fig.add_annotation(
+                    x=(start_time + end_time) / 2,
+                    y=max(signal) * 0.95,
+                    text=stimulus_name,
+                    showarrow=False,
+                    font=dict(size=10, color=color, family="Arial Black"),
+                    textangle=0,
+                    row=1, col=1
                 )
         
         fig.update_xaxes(title_text="Tiempo (min)", row=2, col=1)
