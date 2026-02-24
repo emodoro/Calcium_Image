@@ -63,6 +63,8 @@ class SignalProcessor:
                                adyacent_post_points=5):
         """
         Detección robusta de eventos usando baseline móvil y umbrales adaptativos.
+        Implementa el mismo enfoque que el notebook: dos máscaras separadas para subidas y bajadas
+        que se combinan en una sola máscara.
         
         Args:
             w (int): Ventana para baseline móvil
@@ -93,35 +95,53 @@ class SignalProcessor:
             # Señal muy corta, retornar arrays vacíos
             return np.zeros(N), np.zeros(N), np.zeros(N)
         
+        # --- MÁSCARA PARA SUBIDAS: k_up=k_up, k_down=k_down ---
+        mask_up = self._detect_events_with_params(x, w, k_up, k_down, influence, run_min, 
+                                                   adyacent_pre_points, adyacent_post_points)
+        
+        # --- MÁSCARA PARA BAJADAS: k_up=k_down*2 (como 1.65*2=3.29), k_down=k_down ---
+        # Esto replica el comportamiento del notebook donde usa k_up=3.29 y k_down=1.65
+        mask_down = self._detect_events_with_params(x, w, k_down * 2, k_down, influence, run_min,
+                                                     adyacent_pre_points, adyacent_post_points)
+        
+        # --- COMBINAR MÁSCARAS como en el notebook ---
+        event_mask = np.zeros(N)
+        event_mask[mask_up == 1] = 1      # Subidas de mask_up
+        event_mask[mask_down == -1] = -1  # Bajadas de mask_down
+        
+        # Calcular baseline y desviación para la máscara combinada
+        # (usando los valores de la máscara para subidas para consistencia)
+        _, baseline_array, std_array = self._detect_events_with_baseline(
+            x, w, k_up, k_down, influence, run_min, 
+            adyacent_pre_points, adyacent_post_points
+        )
+        
+        self.event_mask = event_mask
+        return event_mask, baseline_array, std_array
+    
+    def _detect_events_with_params(self, x, w, k_up, k_down, influence, run_min, 
+                                    adyacent_pre_points, adyacent_post_points):
+        """
+        Detección de eventos con parámetros específicos. Retorna solo la máscara.
+        """
+        N = len(x)
         event_mask = np.zeros(N)
         x_filtered = x[:w].copy()
-        baseline_array = np.zeros(N)
-        std_array = np.zeros(N)
         
-        # Calcular baseline y desviación inicial (robusto con mediana)
+        # Baseline inicial
         baseline = np.nanmedian(x_filtered)
-        std_dev = np.nanmedian(np.abs(x_filtered - baseline)) / 0.6745  # MAD
+        std_dev = np.nanmedian(np.abs(x_filtered - baseline)) / 0.6745
         
-        baseline_array[:w] = baseline
-        std_array[:w] = std_dev
-        
-        # Detección con histéresis
+        # Detección
         for i in range(w, N):
             difference = x[i] - baseline
             
-            # Detectar evento de subida
-            if (difference > k_up * std_dev and difference > 0) or \
-               (difference > 0 and event_mask[i-1] == 1):
+            if (difference > k_up * std_dev and difference > 0) or (difference > 0 and event_mask[i-1] == 1):
                 event_mask[i] = 1
                 x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
-            
-            # Detectar evento de bajada
-            elif (difference < -k_down * std_dev and difference < 0) or \
-                 (difference < 0 and event_mask[i-1] == -1):
+            elif (difference < -k_down * std_dev and difference < 0) or (difference < 0 and event_mask[i-1] == -1):
                 event_mask[i] = -1
                 x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
-            
-            # Sin evento
             else:
                 event_mask[i] = 0
                 x_filtered = np.append(x_filtered, x[i])
@@ -133,16 +153,12 @@ class SignalProcessor:
                 elif event_mask[i] == -1 and np.sum(event_mask[i-run_min:i-1] == -1) > 0.8 * run_min:
                     event_mask[i-run_min:i] = -1
             
-            # Actualizar baseline y std móvil
             x_filtered = x_filtered[-w:]
             baseline = np.nanmedian(x_filtered)
             mad = np.nanmedian(np.abs(x_filtered - baseline))
             std_dev = 1.4826 * mad
-            
-            baseline_array[i] = baseline
-            std_array[i] = std_dev
         
-        # Refinar eventos: extender hacia atrás si puntos previos son consistentes
+        # Refinar eventos
         puntos_previos = 5
         cambios = True
         while cambios:
@@ -157,7 +173,77 @@ class SignalProcessor:
                         event_mask[i-1] = -1
                         cambios = True
         
-        # Llenar huecos pequeños entre eventos del mismo tipo
+        # Llenar huecos
+        for i in range(adyacent_pre_points, len(event_mask) - adyacent_post_points - 1):
+            if event_mask[i] == 0 and \
+               np.any(event_mask[i-adyacent_pre_points:i] == 1) and \
+               np.any(event_mask[i+1:i+1+adyacent_post_points] == 1):
+                event_mask[i] = 1
+            elif event_mask[i] == 0 and \
+                 np.any(event_mask[i-adyacent_pre_points:i] == -1) and \
+                 np.any(event_mask[i+1:i+1+adyacent_post_points] == -1):
+                event_mask[i] = -1
+        
+        return event_mask
+    
+    def _detect_events_with_baseline(self, x, w, k_up, k_down, influence, run_min,
+                                      adyacent_pre_points, adyacent_post_points):
+        """
+        Detección de eventos retornando máscara, baseline y desviación.
+        """
+        N = len(x)
+        event_mask = np.zeros(N)
+        x_filtered = x[:w].copy()
+        baseline_array = np.zeros(N)
+        std_array = np.zeros(N)
+        
+        baseline = np.nanmedian(x_filtered)
+        std_dev = np.nanmedian(np.abs(x_filtered - baseline)) / 0.6745
+        
+        baseline_array[:w] = baseline
+        std_array[:w] = std_dev
+        
+        for i in range(w, N):
+            difference = x[i] - baseline
+            
+            if (difference > k_up * std_dev and difference > 0) or (difference > 0 and event_mask[i-1] == 1):
+                event_mask[i] = 1
+                x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
+            elif (difference < -k_down * std_dev and difference < 0) or (difference < 0 and event_mask[i-1] == -1):
+                event_mask[i] = -1
+                x_filtered = np.append(x_filtered, influence * x[i] + (1 - influence) * x_filtered[-1])
+            else:
+                event_mask[i] = 0
+                x_filtered = np.append(x_filtered, x[i])
+            
+            if i > w + run_min:
+                if event_mask[i] == 1 and np.sum(event_mask[i-run_min:i-1] == 1) > 0.8 * run_min:
+                    event_mask[i-run_min:i] = 1
+                elif event_mask[i] == -1 and np.sum(event_mask[i-run_min:i-1] == -1) > 0.8 * run_min:
+                    event_mask[i-run_min:i] = -1
+            
+            x_filtered = x_filtered[-w:]
+            baseline = np.nanmedian(x_filtered)
+            mad = np.nanmedian(np.abs(x_filtered - baseline))
+            std_dev = 1.4826 * mad
+            
+            baseline_array[i] = baseline
+            std_array[i] = std_dev
+        
+        puntos_previos = 5
+        cambios = True
+        while cambios:
+            cambios = False
+            for i in range(1, len(event_mask) - 1):
+                if event_mask[i] == 1 and (np.sum(x[i-puntos_previos:i] <= x[i]) >= 0.8 * puntos_previos):
+                    if event_mask[i-1] != 1:
+                        event_mask[i-1] = 1
+                        cambios = True
+                elif event_mask[i] == -1 and (np.sum(x[i-puntos_previos:i] >= x[i]) >= 0.8 * puntos_previos):
+                    if event_mask[i-1] != -1:
+                        event_mask[i-1] = -1
+                        cambios = True
+        
         for i in range(adyacent_pre_points, len(event_mask) - adyacent_post_points - 1):
             if event_mask[i] == 0 and \
                np.any(event_mask[i-adyacent_pre_points:i] == 1) and \
@@ -284,13 +370,15 @@ def calculate_stimulus_metrics(signal_data, time_array, event_mask,
                 return None
             start_idx = fallback_start[0]
         
-        # Encontrar último evento de bajada antes del siguiente estímulo
-        end_indices = np.where((time_array <= effective_end) & (event_mask == -1))[0]
+        # Encontrar último evento de bajada DESPUÉS del evento de subida y antes del siguiente estímulo
+        end_indices = np.where((time_array > time_array[start_idx]) & 
+                              (time_array <= effective_end) & 
+                              (event_mask == -1))[0]
         
         if len(end_indices) > 0:
             end_idx = end_indices[-1]
         else:
-            # Si no hay eventos de bajada, usar el fin del rango temporal
+            # Si no hay eventos de bajada después de la subida, usar el fin del rango temporal
             fallback_end = np.where(time_array <= effective_end)[0]
             if len(fallback_end) == 0:
                 return None

@@ -427,12 +427,20 @@ def render_eda_section(config, plotter):
                 std_dev = proc['std_dev']
                 stimuli = st.session_state.stimuli_data
                 
+                # Obtener datos de métricas para esta ROI
+                metrics_for_roi = None
+                if 'results_df' in st.session_state:
+                    metrics_for_roi = st.session_state.results_df[
+                        st.session_state.results_df['ROI'] == selected_roi
+                    ].copy()
+                
                 # Gráfico de detección
                 fig = plotter.plot_event_detection(
                     time, signal, event_mask, baseline, std_dev,
                     k_up=config['k_up'], k_down=config['k_down'],
                     roi_name=selected_roi,
-                    stimuli_data=stimuli
+                    stimuli_data=stimuli,
+                    metrics_data=metrics_for_roi
                 )
                 st.plotly_chart(fig, use_container_width=True)
                 
@@ -440,25 +448,30 @@ def render_eda_section(config, plotter):
                 **Interpretación de la Detección:**
                 
                 - **Panel Superior**: Señal con umbrales adaptativos (zona magenta)
-                - **Panel Inferior**: Eventos detectados (+1 = subida, -1 = bajada)
-                - **Zonas Verdes**: Períodos de activación (subida)
-                - **Zonas Rojas**: Períodos de desactivación (bajada)
+                - **Panel Inferior**: Intervalos de eventos detectados según dataset de métricas
+                - Cada rectángulo representa un intervalo de evento para su correspondiente estímulo
                 
                 Los umbrales se adaptan continuamente al contexto local de la señal.
                 """)
                 
                 # Estadísticas de eventos
                 col1, col2, col3 = st.columns(3)
-                num_up = np.sum(np.diff(np.concatenate(([0], event_mask > 0, [0]))) > 0)
-                num_down = np.sum(np.diff(np.concatenate(([0], event_mask < 0, [0]))) > 0)
+                
+                if metrics_for_roi is not None and len(metrics_for_roi) > 0:
+                    num_events = len(metrics_for_roi)
+                    avg_duration = metrics_for_roi['duration'].mean()
+                    avg_area = metrics_for_roi['area_total'].mean()
+                else:
+                    num_events = 0
+                    avg_duration = 0
+                    avg_area = 0
                 
                 with col1:
-                    st.metric("Eventos de Subida", num_up)
+                    st.metric("Eventos Detectados", int(num_events))
                 with col2:
-                    st.metric("Eventos de Bajada", num_down)
+                    st.metric("Duración Promedio (min)", f"{avg_duration:.2f}")
                 with col3:
-                    pct_active = (np.sum(event_mask != 0) / len(event_mask)) * 100
-                    st.metric("% Tiempo Activo", f"{pct_active:.1f}%")
+                    st.metric("Área Promedio", f"{avg_area:.2f}")
     
     # --- TAB 4: Métricas y Resultados ---
     with eda_tab4:
