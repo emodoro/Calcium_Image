@@ -17,8 +17,7 @@ DEFAULT_CSV_FILE = os.path.join(DEFAULT_EXPERIMENT_DIR, 'estimulos.csv')
 SG_WINDOW = 15          # Tamaño de ventana (debe ser impar)
 SG_POLYORDER = 3        # Orden del polinomio
 
-# Parámetros de filtrado por Transformada de Fourier (TF)
-TF_FILTER_ENABLED = False
+# Parámetros de filtrado Butterworth
 TF_FILTER_TYPE = 'bandpass'  # 'lowpass', 'highpass', 'bandpass', 'bandstop'
 TF_CUTOFF_LOW_HZ = 0.02
 TF_CUTOFF_HIGH_HZ = 0.30

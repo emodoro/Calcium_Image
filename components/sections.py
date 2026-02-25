@@ -6,6 +6,7 @@ Cada función renderiza una sección específica del panel.
 import streamlit as st
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 from config import APP_TITLE, APP_DESCRIPTION
 from utils.signal_processing import (
     estimate_sampling_rate,
@@ -412,6 +413,7 @@ def render_eda_section(config, plotter):
                         title="Señal Original vs Suavizada (SG)"
                     )
                     st.plotly_chart(fig_sg, use_container_width=True)
+                    st.caption(f"SG: ventana={config['sg_window']}, orden={config['sg_polyorder']}")
 
                 with col_right:
                     if tf_filtered is not None:
@@ -420,11 +422,28 @@ def render_eda_section(config, plotter):
                             original,
                             tf_filtered,
                             roi_name=selected_roi,
-                            title="Señal Original vs Filtrada (TF)"
+                            title="Señal Original vs Filtrada (Butterworth)"
                         )
                         st.plotly_chart(fig_tf, use_container_width=True)
+                        if config['tf_filter_type'] in ['lowpass', 'highpass']:
+                            cutoff_info = (
+                                config['tf_cutoff_high'] if config['tf_filter_type'] == 'lowpass'
+                                else config['tf_cutoff_low']
+                            )
+                            st.caption(
+                                f"Butterworth: tipo={config['tf_filter_type']}, corte={cutoff_info:.4f} Hz, orden={config['tf_filter_order']}"
+                            )
+                        else:
+                            st.caption(
+                                "Butterworth: tipo={tipo}, corte=[{low:.4f}, {high:.4f}] Hz, orden={order}".format(
+                                    tipo=config['tf_filter_type'],
+                                    low=config['tf_cutoff_low'],
+                                    high=config['tf_cutoff_high'],
+                                    order=config['tf_filter_order']
+                                )
+                            )
                     else:
-                        st.info("Activa el filtrado por TF en el menú lateral para ver esta comparación.")
+                        st.info("No se pudo calcular el filtro Butterworth (frecuencia de muestreo no valida).")
                 
                 st.success("""
                 **Resultado del Suavizado:**
@@ -483,6 +502,25 @@ def render_eda_section(config, plotter):
                 st.caption(
                     f"Señal usada para detección: { {'sg': 'Suavizada (SG)', 'butterworth': 'Filtrada (Butterworth)', 'original': 'Original'}.get(detection_source, 'Suavizada (SG)') }"
                 )
+
+                if detection_source == 'butterworth':
+                    if config['tf_filter_type'] in ['lowpass', 'highpass']:
+                        cutoff_info = (
+                            config['tf_cutoff_high'] if config['tf_filter_type'] == 'lowpass'
+                            else config['tf_cutoff_low']
+                        )
+                        st.caption(
+                            f"Butterworth (deteccion): tipo={config['tf_filter_type']}, corte={cutoff_info:.4f} Hz, orden={config['tf_filter_order']}"
+                        )
+                    else:
+                        st.caption(
+                            "Butterworth (deteccion): tipo={tipo}, corte=[{low:.4f}, {high:.4f}] Hz, orden={order}".format(
+                                tipo=config['tf_filter_type'],
+                                low=config['tf_cutoff_low'],
+                                high=config['tf_cutoff_high'],
+                                order=config['tf_filter_order']
+                            )
+                        )
                 
                 st.info("""
                 **Interpretación de la Detección:**
@@ -731,7 +769,8 @@ def render_spectral_analysis_section(config, plotter):
             min_value=0.0,
             max_value=max_freq_display,
             value=float(default_cutoff_display),
-            step=max(max_freq_display / 200.0, 0.01),
+            step=max(max_freq_display / 200.0, 0.001),
+            format="%.4f",
             key='spectral_cutoff_single'
         )
         cutoff_hz = cutoff_display if units == 'Hz' else cutoff_display / 60.0
@@ -743,7 +782,8 @@ def render_spectral_analysis_section(config, plotter):
                 min_value=0.0,
                 max_value=max_freq_display,
                 value=float(max_freq_display * 0.1),
-                step=max(max_freq_display / 200.0, 0.01),
+                step=max(max_freq_display / 200.0, 0.001),
+                format="%.4f",
                 key='spectral_cutoff_low'
             )
         with col_high:
@@ -752,7 +792,8 @@ def render_spectral_analysis_section(config, plotter):
                 min_value=0.0,
                 max_value=max_freq_display,
                 value=float(max_freq_display * 0.3),
-                step=max(max_freq_display / 200.0, 0.01),
+                step=max(max_freq_display / 200.0, 0.001),
+                format="%.4f",
                 key='spectral_cutoff_high'
             )
         if low_display >= high_display:
@@ -812,24 +853,50 @@ def render_spectral_analysis_section(config, plotter):
     st.markdown("---")
     st.markdown("### 📈 Señal y Espectro")
 
-    fig_time = plotter.plot_time_domain_comparison(
-        time_seg,
-        signal_seg,
-        filtered_signal,
-        roi_name=selected_roi
-    )
-    st.plotly_chart(fig_time, use_container_width=True)
+    col_left, col_right = st.columns(2)
+    with col_left:
+        fig_time = plotter.plot_time_domain_comparison(
+            time_seg,
+            signal_seg,
+            filtered_signal,
+            roi_name=selected_roi
+        )
+        fig_time.update_layout(height=600)
+        st.plotly_chart(fig_time, use_container_width=True)
 
-    fig_spec = plotter.plot_spectral_comparison(
-        freqs_display,
-        mag_before,
-        mag_after,
-        units_label=units_label,
-        title="Espectro de la Transformada de Fourier"
-    )
-    if st.checkbox("Escala logarítmica en magnitud", value=False, key='spectral_log_scale'):
-        fig_spec.update_yaxes(type='log')
-    st.plotly_chart(fig_spec, use_container_width=True)
+    with col_right:
+        removed_mask = np.zeros_like(freqs_hz, dtype=bool)
+        if filter_type != 'none' and cutoff_hz is not None:
+            if filter_type == 'lowpass':
+                removed_mask = freqs_hz > cutoff_hz
+            elif filter_type == 'highpass':
+                removed_mask = freqs_hz < cutoff_hz
+            elif filter_type == 'bandpass':
+                removed_mask = (freqs_hz < cutoff_hz[0]) | (freqs_hz > cutoff_hz[1])
+            elif filter_type == 'bandstop':
+                removed_mask = (freqs_hz >= cutoff_hz[0]) & (freqs_hz <= cutoff_hz[1])
+
+        bar_colors = np.where(removed_mask, '#d62728', '#7f7f7f')
+
+        fig_spec = go.Figure()
+        fig_spec.add_trace(go.Bar(
+            x=freqs_display,
+            y=mag_before,
+            name='Antes del filtro',
+            marker=dict(color=bar_colors)
+        ))
+        fig_spec.update_layout(
+            title="Espectro de la Transformada de Fourier (antes del filtro)",
+            xaxis_title=f"Frecuencia ({units_label})",
+            yaxis_title="Magnitud",
+            hovermode='x unified',
+            template='plotly_white',
+            height=600,
+            showlegend=False
+        )
+        if st.checkbox("Escala logarítmica en magnitud", value=False, key='spectral_log_scale'):
+            fig_spec.update_yaxes(type='log')
+        st.plotly_chart(fig_spec, use_container_width=True)
 
     st.markdown("---")
     st.markdown("### 🔍 Frecuencia Dominante")

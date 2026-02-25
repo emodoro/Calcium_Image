@@ -502,8 +502,14 @@ def apply_butter_filter(signal_data, sampling_rate_hz, filter_type,
     nyquist = 0.5 * sampling_rate_hz
 
     if isinstance(cutoff_hz, (tuple, list, np.ndarray)):
+        if len(cutoff_hz) != 2 or cutoff_hz[0] is None or cutoff_hz[1] is None:
+            return np.asarray(signal_data, dtype=float)
+        if cutoff_hz[0] <= 0 or cutoff_hz[1] >= nyquist or cutoff_hz[0] >= cutoff_hz[1]:
+            return np.asarray(signal_data, dtype=float)
         cutoff = [c / nyquist for c in cutoff_hz]
     else:
+        if cutoff_hz is None or cutoff_hz <= 0 or cutoff_hz >= nyquist:
+            return np.asarray(signal_data, dtype=float)
         cutoff = cutoff_hz / nyquist
 
     b, a = signal.butter(order, cutoff, btype=filter_type, analog=False)

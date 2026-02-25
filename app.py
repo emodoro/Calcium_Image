@@ -250,8 +250,7 @@ def process_signals(loader, config):
         sampling_rate_hz = estimate_sampling_rate(time_array)
         tf_filtered = None
         detection_source = config.get('detection_signal_source', 'sg')
-        needs_butterworth = config.get('tf_enabled') or detection_source == 'butterworth'
-        if needs_butterworth and sampling_rate_hz > 0:
+        if sampling_rate_hz > 0:
             tf_filter_type = config.get('tf_filter_type', 'bandpass')
             tf_filter_order = config.get('tf_filter_order', 4)
             if tf_filter_type in ['lowpass', 'highpass']:
@@ -496,7 +495,6 @@ def main():
             # Verificar si cambiaron parámetros importantes
             params_to_check = ['sg_window', 'sg_polyorder', 'signal_window', 'k_up', 'k_down', 'influence', 'run_min']
             params_to_check.extend([
-                'tf_enabled',
                 'tf_filter_type',
                 'tf_filter_order',
                 'tf_cutoff_low',

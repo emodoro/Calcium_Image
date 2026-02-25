@@ -81,18 +81,29 @@ def render_sidebar():
                 value=SG_POLYORDER,
                 help="Orden del polinomio de ajuste"
             )
+            summary = st.session_state.get('data_summary', {})
+            sampling_rate_hz = summary.get('sampling_rate_hz', None)
+            duration_min = summary.get('duration_minutes', None)
+            if sampling_rate_hz:
+                # Ventana sugerida: 10-30 s según duración total
+                target_seconds = 10.0
+                if duration_min and duration_min >= 8:
+                    target_seconds = 20.0
+                if duration_min and duration_min >= 15:
+                    target_seconds = 30.0
+
+                suggested_window = int(round(sampling_rate_hz * target_seconds)) | 1
+                suggested_window = max(MIN_WINDOW, min(suggested_window, 50))
+                st.caption(
+                    "Sugerencia: ventana≈{w} (~{sec:.0f}s) y orden 3; suaviza ruido rapido sin borrar transitorios."
+                    .format(w=suggested_window, sec=target_seconds)
+                )
 
         with st.expander("Filtrado Butterworth", expanded=False):
             summary = st.session_state.get('data_summary', {})
             sampling_rate_hz = summary.get('sampling_rate_hz', None)
             max_freq = sampling_rate_hz / 2.0 if sampling_rate_hz else 5.0
             max_freq = max(max_freq, 0.001)
-
-            tf_enabled = st.checkbox(
-                "Activar filtrado Butterworth",
-                value=TF_FILTER_ENABLED,
-                help="Filtra la señal con Butterworth (filtfilt) para reducir ruido."
-            )
 
             tf_filter_type = st.selectbox(
                 "Tipo de filtro",
@@ -115,6 +126,19 @@ def render_sidebar():
                 step=1
             )
 
+            if sampling_rate_hz:
+                nyquist = sampling_rate_hz / 2.0
+                # Lowcut sugerido: 2 ciclos en todo el registro
+                if duration_min and duration_min > 0:
+                    lowcut = max(1.0 / (duration_min * 60.0) * 2.0, 0.005)
+                else:
+                    lowcut = 0.01
+                highcut = min(0.3, nyquist * 0.8)
+                st.caption(
+                    "Sugerencia: orden 4, corte bajo≈{low:.4f} Hz y corte alto≈{high:.3f} Hz; conserva oscilaciones lentas y elimina ruido rapido."
+                    .format(low=lowcut, high=highcut)
+                )
+
             if tf_filter_type in ['lowpass', 'highpass']:
                 default_cutoff = TF_CUTOFF_HIGH_HZ if tf_filter_type == 'lowpass' else TF_CUTOFF_LOW_HZ
                 default_cutoff = min(float(default_cutoff), float(max_freq))
@@ -123,7 +147,8 @@ def render_sidebar():
                     min_value=0.001,
                     max_value=float(max_freq),
                     value=default_cutoff,
-                    step=max(float(max_freq) / 200.0, 0.01)
+                    step=max(float(max_freq) / 200.0, 0.001),
+                    format="%.4f"
                 )
                 tf_cutoff_low = tf_cutoff if tf_filter_type == 'highpass' else None
                 tf_cutoff_high = tf_cutoff if tf_filter_type == 'lowpass' else None
@@ -135,14 +160,16 @@ def render_sidebar():
                     min_value=0.001,
                     max_value=float(max_freq),
                     value=default_low,
-                    step=max(float(max_freq) / 200.0, 0.01)
+                    step=max(float(max_freq) / 200.0, 0.001),
+                    format="%.4f"
                 )
                 tf_cutoff_high = st.number_input(
                     "Corte superior (Hz)",
                     min_value=0.001,
                     max_value=float(max_freq),
                     value=default_high,
-                    step=max(float(max_freq) / 200.0, 0.01)
+                    step=max(float(max_freq) / 200.0, 0.001),
+                    format="%.4f"
                 )
         
         with st.expander("Detección de Eventos", expanded=True):
@@ -255,7 +282,6 @@ def render_sidebar():
         'csv_file': csv_file,
         'sg_window': sg_window,
         'sg_polyorder': sg_polyorder,
-            'tf_enabled': tf_enabled,
             'tf_filter_type': tf_filter_type,
             'tf_filter_order': tf_filter_order,
             'tf_cutoff_low': tf_cutoff_low,
