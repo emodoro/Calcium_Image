@@ -416,3 +416,80 @@ class CalciumPlotter:
         )
         
         return fig
+
+    @staticmethod
+    def plot_time_domain_comparison(time, signal_before, signal_after,
+                                    roi_name="ROI", title="Señal Antes vs Después del Filtro"):
+        """
+        Compara la señal antes y después del filtrado en el dominio temporal.
+        """
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=time,
+            y=signal_before,
+            mode='lines',
+            name='Antes del filtro',
+            line=dict(color='gray', width=1),
+            opacity=0.6
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=time,
+            y=signal_after,
+            mode='lines',
+            name='Después del filtro',
+            line=dict(color='royalblue', width=2)
+        ))
+
+        fig.update_layout(
+            title=f"{title} - {roi_name}",
+            xaxis_title="Tiempo (min)",
+            yaxis_title="Intensidad de Fluorescencia",
+            hovermode='x unified',
+            template='plotly_white',
+            height=450
+        )
+
+        return fig
+
+    @staticmethod
+    def plot_spectral_comparison(freqs, magnitude_before, magnitude_after,
+                                 units_label="Hz", title="Espectro de Fourier"):
+        """
+        Crea un gráfico comparativo de espectros antes y después del filtrado.
+        """
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.08,
+            subplot_titles=("Antes del filtro", "Después del filtro")
+        )
+
+        fig.add_trace(go.Scatter(
+            x=freqs,
+            y=magnitude_before,
+            mode='lines',
+            name='Antes',
+            line=dict(color='gray', width=1)
+        ), row=1, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=freqs,
+            y=magnitude_after,
+            mode='lines',
+            name='Después',
+            line=dict(color='royalblue', width=2)
+        ), row=2, col=1)
+
+        fig.update_layout(
+            title=title,
+            xaxis_title=f"Frecuencia ({units_label})",
+            yaxis_title="Magnitud",
+            hovermode='x unified',
+            template='plotly_white',
+            height=600,
+            showlegend=False
+        )
+
+        return fig

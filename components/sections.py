@@ -7,6 +7,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from config import APP_TITLE, APP_DESCRIPTION
+from utils.signal_processing import (
+    estimate_sampling_rate,
+    interpolate_masked_signal,
+    apply_butter_filter,
+    compute_fft_spectrum
+)
 
 
 def render_home_section():
@@ -394,10 +400,31 @@ def render_eda_section(config, plotter):
                 time = st.session_state.time_array
                 original = proc['original']
                 smoothed = proc['smoothed']
+                tf_filtered = proc.get('tf_filtered')
                 
-                # Gráfico comparativo
-                fig = plotter.plot_original_vs_smoothed(time, original, smoothed, roi_name=selected_roi)
-                st.plotly_chart(fig, use_container_width=True)
+                col_left, col_right = st.columns(2)
+                with col_left:
+                    fig_sg = plotter.plot_time_domain_comparison(
+                        time,
+                        original,
+                        smoothed,
+                        roi_name=selected_roi,
+                        title="Señal Original vs Suavizada (SG)"
+                    )
+                    st.plotly_chart(fig_sg, use_container_width=True)
+
+                with col_right:
+                    if tf_filtered is not None:
+                        fig_tf = plotter.plot_time_domain_comparison(
+                            time,
+                            original,
+                            tf_filtered,
+                            roi_name=selected_roi,
+                            title="Señal Original vs Filtrada (TF)"
+                        )
+                        st.plotly_chart(fig_tf, use_container_width=True)
+                    else:
+                        st.info("Activa el filtrado por TF en el menú lateral para ver esta comparación.")
                 
                 st.success("""
                 **Resultado del Suavizado:**
@@ -421,7 +448,16 @@ def render_eda_section(config, plotter):
                 proc = st.session_state.processed_signals[selected_roi]
                 
                 time = st.session_state.time_array
-                signal = proc['smoothed']
+                detection_source = config.get('detection_signal_source', 'sg')
+                if detection_source == 'butterworth':
+                    signal = proc.get('tf_filtered')
+                    if signal is None:
+                        signal = proc['smoothed']
+                        st.info("No hay señal Butterworth disponible. Usando señal suavizada (SG).")
+                elif detection_source == 'original':
+                    signal = proc['original']
+                else:
+                    signal = proc['smoothed']
                 event_mask = proc['event_mask']
                 baseline = proc['baseline']
                 std_dev = proc['std_dev']
@@ -443,6 +479,10 @@ def render_eda_section(config, plotter):
                     metrics_data=metrics_for_roi
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+                st.caption(
+                    f"Señal usada para detección: { {'sg': 'Suavizada (SG)', 'butterworth': 'Filtrada (Butterworth)', 'original': 'Original'}.get(detection_source, 'Suavizada (SG)') }"
+                )
                 
                 st.info("""
                 **Interpretación de la Detección:**
@@ -541,6 +581,294 @@ def render_eda_section(config, plotter):
         
         else:
             st.warning("No hay resultados calculados aún.")
+
+
+def render_spectral_analysis_section(config, plotter):
+    """
+    Renderiza la sección de análisis espectral con filtros y FFT.
+    """
+    st.title("🎵 Análisis Espectral")
+
+    if 'data_loaded' not in st.session_state or not st.session_state.data_loaded:
+        st.warning("⚠️ Por favor carga los datos primero desde el menú lateral.")
+        return
+
+    if 'time_array' not in st.session_state or 'calcium_data' not in st.session_state:
+        st.warning("⚠️ No se encontraron datos en memoria. Recarga la aplicación.")
+        return
+
+    time = st.session_state.time_array
+    rois = config['selected_rois'] if config['selected_rois'] else st.session_state.get('available_rois', [])
+
+    selected_roi = st.selectbox(
+        "Selecciona una ROI para análisis espectral:",
+        options=rois,
+        key='spectral_roi_selector'
+    )
+
+    if not selected_roi:
+        st.info("Selecciona una ROI para continuar.")
+        return
+
+    source = st.radio(
+        "Fuente de señal:",
+        options=["Original", "Suavizada"],
+        horizontal=True,
+        key='spectral_signal_source'
+    )
+
+    signal_data = st.session_state.calcium_data[selected_roi].to_numpy()
+    if source == "Suavizada":
+        if 'processed_signals' in st.session_state and selected_roi in st.session_state.processed_signals:
+            signal_data = st.session_state.processed_signals[selected_roi]['smoothed']
+        else:
+            st.info("No hay señal suavizada disponible. Usando señal original.")
+
+    # Ventana temporal
+    time_min = float(time[0])
+    time_max = float(time[-1])
+    step = max((time_max - time_min) / 200.0, 0.01)
+    window_start, window_end = st.slider(
+        "Ventana temporal (min):",
+        min_value=time_min,
+        max_value=time_max,
+        value=(time_min, time_max),
+        step=step,
+        key='spectral_time_window'
+    )
+
+    window_mask = (time >= window_start) & (time <= window_end)
+    if np.sum(window_mask) < 4:
+        st.warning("La ventana seleccionada es demasiado corta para análisis espectral.")
+        return
+
+    time_seg = time[window_mask]
+    signal_seg = signal_data[window_mask]
+
+    st.markdown("---")
+    st.markdown("### 🔧 Opciones de Segmentación")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        exclude_stimuli = st.checkbox(
+            "Excluir intervalos de estímulos",
+            value=False,
+            help="Interpola los intervalos de estímulo para reducir su influencia espectral."
+        )
+    with col2:
+        exclude_events = st.checkbox(
+            "Excluir eventos detectados",
+            value=False,
+            help="Interpola los eventos detectados para centrarse en oscilaciones de fondo.",
+            disabled='processed_signals' not in st.session_state
+        )
+
+    keep_mask = np.ones_like(signal_seg, dtype=bool)
+
+    if exclude_stimuli and 'stimuli_data' in st.session_state:
+        stimuli = st.session_state.stimuli_data
+        for _, row in stimuli.iterrows():
+            start_time = float(row['inicio'])
+            end_time = float(row['fin'])
+            keep_mask &= ~((time_seg >= start_time) & (time_seg <= end_time))
+
+    if exclude_events and 'processed_signals' in st.session_state:
+        event_mask = st.session_state.processed_signals[selected_roi]['event_mask']
+        event_mask_seg = event_mask[window_mask]
+        keep_mask &= (event_mask_seg == 0)
+
+    if not keep_mask.all():
+        signal_seg = interpolate_masked_signal(signal_seg, keep_mask)
+        st.caption("Se interpolaron segmentos excluidos para mantener muestreo uniforme.")
+
+    sampling_rate_hz = estimate_sampling_rate(time_seg)
+    if sampling_rate_hz <= 0:
+        st.warning("No fue posible estimar la frecuencia de muestreo.")
+        return
+
+    nyquist_hz = 0.5 * sampling_rate_hz
+
+    st.markdown("---")
+    st.markdown("### 🎚️ Filtros Espectrales")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        filter_type = st.selectbox(
+            "Tipo de filtro:",
+            options=['none', 'lowpass', 'highpass', 'bandpass', 'bandstop'],
+            format_func=lambda x: {
+                'none': 'Sin filtro',
+                'lowpass': 'Paso bajo',
+                'highpass': 'Paso alto',
+                'bandpass': 'Paso banda',
+                'bandstop': 'Rechaza banda'
+            }[x],
+            key='spectral_filter_type'
+        )
+    with col2:
+        units = st.selectbox(
+            "Unidades de frecuencia:",
+            options=['Hz', 'ciclos/min'],
+            key='spectral_units'
+        )
+    with col3:
+        filter_order = st.slider(
+            "Orden del filtro:",
+            min_value=2,
+            max_value=8,
+            value=4,
+            step=1,
+            key='spectral_filter_order'
+        )
+
+    max_freq_display = nyquist_hz if units == 'Hz' else nyquist_hz * 60.0
+    default_cutoff_display = min(max_freq_display * 0.25, max_freq_display * 0.9)
+    cutoff_hz = None
+
+    if filter_type in ['lowpass', 'highpass']:
+        cutoff_display = st.number_input(
+            "Frecuencia de corte:",
+            min_value=0.0,
+            max_value=max_freq_display,
+            value=float(default_cutoff_display),
+            step=max(max_freq_display / 200.0, 0.01),
+            key='spectral_cutoff_single'
+        )
+        cutoff_hz = cutoff_display if units == 'Hz' else cutoff_display / 60.0
+    elif filter_type in ['bandpass', 'bandstop']:
+        col_low, col_high = st.columns(2)
+        with col_low:
+            low_display = st.number_input(
+                "Corte inferior:",
+                min_value=0.0,
+                max_value=max_freq_display,
+                value=float(max_freq_display * 0.1),
+                step=max(max_freq_display / 200.0, 0.01),
+                key='spectral_cutoff_low'
+            )
+        with col_high:
+            high_display = st.number_input(
+                "Corte superior:",
+                min_value=0.0,
+                max_value=max_freq_display,
+                value=float(max_freq_display * 0.3),
+                step=max(max_freq_display / 200.0, 0.01),
+                key='spectral_cutoff_high'
+            )
+        if low_display >= high_display:
+            st.error("El corte inferior debe ser menor que el superior.")
+            return
+        cutoff_hz = (
+            low_display if units == 'Hz' else low_display / 60.0,
+            high_display if units == 'Hz' else high_display / 60.0
+        )
+
+    detrend = st.checkbox(
+        "Restar media antes de FFT",
+        value=True,
+        key='spectral_detrend'
+    )
+    use_window = st.checkbox(
+        "Aplicar ventana Hann",
+        value=True,
+        key='spectral_window'
+    )
+
+    if filter_type != 'none' and cutoff_hz is not None:
+        if isinstance(cutoff_hz, tuple):
+            if cutoff_hz[0] <= 0 or cutoff_hz[1] >= nyquist_hz:
+                st.error("Las frecuencias de corte deben estar entre 0 y Nyquist.")
+                return
+        else:
+            if cutoff_hz <= 0 or cutoff_hz >= nyquist_hz:
+                st.error("La frecuencia de corte debe estar entre 0 y Nyquist.")
+                return
+
+    filtered_signal = apply_butter_filter(
+        signal_seg,
+        sampling_rate_hz,
+        filter_type,
+        cutoff_hz if cutoff_hz is not None else 0.0,
+        order=filter_order
+    )
+
+    window_name = 'hann' if use_window else None
+    freqs_hz, mag_before = compute_fft_spectrum(
+        signal_seg,
+        sampling_rate_hz,
+        detrend=detrend,
+        window=window_name
+    )
+    _, mag_after = compute_fft_spectrum(
+        filtered_signal,
+        sampling_rate_hz,
+        detrend=detrend,
+        window=window_name
+    )
+
+    freqs_display = freqs_hz if units == 'Hz' else freqs_hz * 60.0
+    units_label = "Hz" if units == 'Hz' else "ciclos/min"
+
+    st.markdown("---")
+    st.markdown("### 📈 Señal y Espectro")
+
+    fig_time = plotter.plot_time_domain_comparison(
+        time_seg,
+        signal_seg,
+        filtered_signal,
+        roi_name=selected_roi
+    )
+    st.plotly_chart(fig_time, use_container_width=True)
+
+    fig_spec = plotter.plot_spectral_comparison(
+        freqs_display,
+        mag_before,
+        mag_after,
+        units_label=units_label,
+        title="Espectro de la Transformada de Fourier"
+    )
+    if st.checkbox("Escala logarítmica en magnitud", value=False, key='spectral_log_scale'):
+        fig_spec.update_yaxes(type='log')
+    st.plotly_chart(fig_spec, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 🔍 Frecuencia Dominante")
+
+    max_search_display = max_freq_display * 0.95
+    range_min_default = max_search_display * 0.02
+    range_max_default = max_search_display * 0.5
+    search_min, search_max = st.slider(
+        "Rango de búsqueda de pico dominante:",
+        min_value=0.0,
+        max_value=max_search_display,
+        value=(range_min_default, range_max_default),
+        step=max(max_freq_display / 200.0, 0.01),
+        key='spectral_peak_range'
+    )
+
+    peak_mask = (freqs_display >= search_min) & (freqs_display <= search_max)
+    if np.any(peak_mask):
+        peak_idx = np.argmax(mag_after[peak_mask])
+        dominant_freq_display = freqs_display[peak_mask][peak_idx]
+        dominant_freq_hz = freqs_hz[peak_mask][peak_idx]
+        dominant_mag = mag_after[peak_mask][peak_idx]
+        period_seconds = 1.0 / dominant_freq_hz if dominant_freq_hz > 0 else 0.0
+        period_minutes = period_seconds / 60.0 if period_seconds > 0 else 0.0
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Frecuencia dominante", f"{dominant_freq_display:.4f} {units_label}")
+        with col2:
+            st.metric("Periodo", f"{period_minutes:.2f} min")
+        with col3:
+            st.metric("Magnitud", f"{dominant_mag:.4f}")
+    else:
+        st.info("No se encontraron picos en el rango seleccionado.")
+
+    st.caption(
+        f"Frecuencia de muestreo estimada: {sampling_rate_hz:.3f} Hz | "
+        f"Nyquist: {nyquist_hz:.3f} Hz"
+    )
 
 
 def render_conclusions_section():

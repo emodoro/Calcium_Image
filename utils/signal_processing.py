@@ -355,6 +355,8 @@ def calculate_stimulus_metrics(signal_data, time_array, event_mask,
         if len(valid_time_range) == 0:
             # No hay puntos en el rango temporal
             return None
+
+
         
         # Encontrar primer evento de subida después del inicio del estímulo
         start_indices = np.where((time_array >= stimulus_start) & 
@@ -436,3 +438,137 @@ def calculate_stimulus_metrics(signal_data, time_array, event_mask,
     except Exception as e:
         # Si hay cualquier error, retornar None
         return None
+
+
+def estimate_sampling_rate(time_array_minutes):
+    """
+    Estima la frecuencia de muestreo en Hz a partir de un array de tiempo en minutos.
+    """
+    if len(time_array_minutes) < 2:
+        return 0.0
+    dt_min = np.nanmedian(np.diff(time_array_minutes))
+    dt_seconds = dt_min * 60.0
+    if dt_seconds <= 0:
+        return 0.0
+    return 1.0 / dt_seconds
+
+
+def interpolate_masked_signal(signal_data, keep_mask):
+    """
+    Interpola segmentos excluidos para mantener muestreo uniforme.
+
+    Args:
+        signal_data (np.ndarray): Señal original
+        keep_mask (np.ndarray): True donde mantener la señal
+
+    Returns:
+        np.ndarray: Señal con segmentos excluidos interpolados
+    """
+    x = np.asarray(signal_data, dtype=float).copy()
+    keep_mask = np.asarray(keep_mask, dtype=bool)
+    if keep_mask.all():
+        return x
+
+    idx = np.arange(len(x))
+    valid = keep_mask & np.isfinite(x)
+    if valid.sum() < 2:
+        return x
+
+    x[~keep_mask] = np.interp(idx[~keep_mask], idx[valid], x[valid])
+    return x
+
+
+def apply_butter_filter(signal_data, sampling_rate_hz, filter_type,
+                        cutoff_hz, order=4):
+    """
+    Aplica un filtro Butterworth con filtfilt.
+
+    Args:
+        signal_data (np.ndarray): Señal a filtrar
+        sampling_rate_hz (float): Frecuencia de muestreo en Hz
+        filter_type (str): 'lowpass', 'highpass', 'bandpass', 'bandstop'
+        cutoff_hz (float or tuple): Frecuencias de corte en Hz
+        order (int): Orden del filtro
+
+    Returns:
+        np.ndarray: Señal filtrada
+    """
+    if filter_type == 'none':
+        return np.asarray(signal_data, dtype=float)
+
+    if sampling_rate_hz <= 0:
+        return np.asarray(signal_data, dtype=float)
+
+    nyquist = 0.5 * sampling_rate_hz
+
+    if isinstance(cutoff_hz, (tuple, list, np.ndarray)):
+        cutoff = [c / nyquist for c in cutoff_hz]
+    else:
+        cutoff = cutoff_hz / nyquist
+
+    b, a = signal.butter(order, cutoff, btype=filter_type, analog=False)
+    return signal.filtfilt(b, a, np.asarray(signal_data, dtype=float))
+
+
+def compute_fft_spectrum(signal_data, sampling_rate_hz, detrend=True, window='hann'):
+    """
+    Calcula el espectro de magnitud usando FFT real.
+
+    Args:
+        signal_data (np.ndarray): Señal a analizar
+        sampling_rate_hz (float): Frecuencia de muestreo en Hz
+        detrend (bool): Restar la media antes de FFT
+        window (str|None): 'hann' o None
+
+    Returns:
+        tuple: (freqs_hz, magnitude)
+    """
+    x = np.asarray(signal_data, dtype=float)
+    if detrend:
+        x = x - np.nanmean(x)
+
+    if window == 'hann':
+        win = np.hanning(len(x))
+        x = x * win
+
+    fft_vals = np.fft.rfft(x)
+    freqs = np.fft.rfftfreq(len(x), d=1.0 / sampling_rate_hz)
+    magnitude = np.abs(fft_vals)
+    return freqs, magnitude
+
+
+def apply_fft_filter(signal_data, sampling_rate_hz, filter_type, cutoff_hz):
+    """
+    Filtra una señal en el dominio de la frecuencia usando FFT.
+
+    Args:
+        signal_data (np.ndarray): Señal a filtrar
+        sampling_rate_hz (float): Frecuencia de muestreo en Hz
+        filter_type (str): 'lowpass', 'highpass', 'bandpass', 'bandstop'
+        cutoff_hz (float|tuple): Frecuencias de corte en Hz
+
+    Returns:
+        np.ndarray: Señal filtrada (tiempo)
+    """
+    if sampling_rate_hz <= 0 or filter_type == 'none':
+        return np.asarray(signal_data, dtype=float)
+
+    x = np.asarray(signal_data, dtype=float)
+    n = len(x)
+    freqs = np.fft.rfftfreq(n, d=1.0 / sampling_rate_hz)
+    fft_vals = np.fft.rfft(x)
+
+    mask = np.ones_like(freqs, dtype=bool)
+    if filter_type == 'lowpass':
+        mask = freqs <= cutoff_hz
+    elif filter_type == 'highpass':
+        mask = freqs >= cutoff_hz
+    elif filter_type == 'bandpass':
+        low, high = cutoff_hz
+        mask = (freqs >= low) & (freqs <= high)
+    elif filter_type == 'bandstop':
+        low, high = cutoff_hz
+        mask = (freqs < low) | (freqs > high)
+
+    fft_vals[~mask] = 0.0
+    return np.fft.irfft(fft_vals, n=n)

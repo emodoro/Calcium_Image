@@ -81,8 +81,83 @@ def render_sidebar():
                 value=SG_POLYORDER,
                 help="Orden del polinomio de ajuste"
             )
+
+        with st.expander("Filtrado Butterworth", expanded=False):
+            summary = st.session_state.get('data_summary', {})
+            sampling_rate_hz = summary.get('sampling_rate_hz', None)
+            max_freq = sampling_rate_hz / 2.0 if sampling_rate_hz else 5.0
+            max_freq = max(max_freq, 0.001)
+
+            tf_enabled = st.checkbox(
+                "Activar filtrado Butterworth",
+                value=TF_FILTER_ENABLED,
+                help="Filtra la señal con Butterworth (filtfilt) para reducir ruido."
+            )
+
+            tf_filter_type = st.selectbox(
+                "Tipo de filtro",
+                options=['lowpass', 'highpass', 'bandpass', 'bandstop'],
+                format_func=lambda x: {
+                    'lowpass': 'Paso bajo',
+                    'highpass': 'Paso alto',
+                    'bandpass': 'Paso banda',
+                    'bandstop': 'Rechaza banda'
+                }[x],
+                index=['lowpass', 'highpass', 'bandpass', 'bandstop'].index(TF_FILTER_TYPE)
+                if TF_FILTER_TYPE in ['lowpass', 'highpass', 'bandpass', 'bandstop'] else 2
+            )
+
+            tf_filter_order = st.slider(
+                "Orden del filtro",
+                min_value=2,
+                max_value=8,
+                value=TF_FILTER_ORDER,
+                step=1
+            )
+
+            if tf_filter_type in ['lowpass', 'highpass']:
+                default_cutoff = TF_CUTOFF_HIGH_HZ if tf_filter_type == 'lowpass' else TF_CUTOFF_LOW_HZ
+                default_cutoff = min(float(default_cutoff), float(max_freq))
+                tf_cutoff = st.number_input(
+                    "Frecuencia de corte (Hz)",
+                    min_value=0.001,
+                    max_value=float(max_freq),
+                    value=default_cutoff,
+                    step=max(float(max_freq) / 200.0, 0.01)
+                )
+                tf_cutoff_low = tf_cutoff if tf_filter_type == 'highpass' else None
+                tf_cutoff_high = tf_cutoff if tf_filter_type == 'lowpass' else None
+            else:
+                default_low = min(float(TF_CUTOFF_LOW_HZ), float(max_freq))
+                default_high = min(float(TF_CUTOFF_HIGH_HZ), float(max_freq))
+                tf_cutoff_low = st.number_input(
+                    "Corte inferior (Hz)",
+                    min_value=0.001,
+                    max_value=float(max_freq),
+                    value=default_low,
+                    step=max(float(max_freq) / 200.0, 0.01)
+                )
+                tf_cutoff_high = st.number_input(
+                    "Corte superior (Hz)",
+                    min_value=0.001,
+                    max_value=float(max_freq),
+                    value=default_high,
+                    step=max(float(max_freq) / 200.0, 0.01)
+                )
         
         with st.expander("Detección de Eventos", expanded=False):
+            detection_signal_source = st.selectbox(
+                "Señal para detección",
+                options=['sg', 'butterworth', 'original'],
+                format_func=lambda x: {
+                    'sg': 'Suavizada (SG)',
+                    'butterworth': 'Filtrada (Butterworth)',
+                    'original': 'Original'
+                }[x],
+                index=['sg', 'butterworth', 'original'].index(DETECTION_SIGNAL_SOURCE)
+                if DETECTION_SIGNAL_SOURCE in ['sg', 'butterworth', 'original'] else 0
+            )
+
             signal_window = st.slider(
                 "Ventana baseline móvil",
                 min_value=MIN_WINDOW,
@@ -179,6 +254,12 @@ def render_sidebar():
         'csv_file': csv_file,
         'sg_window': sg_window,
         'sg_polyorder': sg_polyorder,
+            'tf_enabled': tf_enabled,
+            'tf_filter_type': tf_filter_type,
+            'tf_filter_order': tf_filter_order,
+            'tf_cutoff_low': tf_cutoff_low,
+            'tf_cutoff_high': tf_cutoff_high,
+            'detection_signal_source': detection_signal_source,
         'signal_window': signal_window,
         'k_up': k_up,
         'k_down': k_down,

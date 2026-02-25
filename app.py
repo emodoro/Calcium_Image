@@ -34,7 +34,12 @@ from config import *
 
 # Importar utilidades
 from utils.data_processor import CalciumDataLoader, validate_uploaded_files
-from utils.signal_processing import SignalProcessor, calculate_stimulus_metrics
+from utils.signal_processing import (
+    SignalProcessor,
+    calculate_stimulus_metrics,
+    apply_butter_filter,
+    estimate_sampling_rate
+)
 from utils.plotting import CalciumPlotter
 
 # Importar componentes de UI
@@ -44,6 +49,7 @@ from components.sections import (
     render_origin_section,
     render_data_explanation_section,
     render_eda_section,
+    render_spectral_analysis_section,
     render_conclusions_section
 )
 
@@ -239,20 +245,52 @@ def process_signals(loader, config):
             window=config['sg_window'],
             polyorder=config['sg_polyorder']
         )
+
+        # Filtrado Butterworth para reducción de ruido
+        sampling_rate_hz = estimate_sampling_rate(time_array)
+        tf_filtered = None
+        detection_source = config.get('detection_signal_source', 'sg')
+        needs_butterworth = config.get('tf_enabled') or detection_source == 'butterworth'
+        if needs_butterworth and sampling_rate_hz > 0:
+            tf_filter_type = config.get('tf_filter_type', 'bandpass')
+            tf_filter_order = config.get('tf_filter_order', 4)
+            if tf_filter_type in ['lowpass', 'highpass']:
+                cutoff = config.get('tf_cutoff_high') if tf_filter_type == 'lowpass' else config.get('tf_cutoff_low')
+            else:
+                cutoff = (config.get('tf_cutoff_low'), config.get('tf_cutoff_high'))
+
+            if cutoff is not None and not (isinstance(cutoff, tuple) and None in cutoff):
+                tf_filtered = apply_butter_filter(
+                    signal_data,
+                    sampling_rate_hz,
+                    tf_filter_type,
+                    cutoff,
+                    order=tf_filter_order
+                )
         
-        # Detección de eventos
+        # Detección de eventos usando la señal seleccionada
+        if detection_source == 'butterworth' and tf_filtered is not None:
+            processor.smoothed_signal = tf_filtered
+            use_smoothed = True
+        elif detection_source == 'original':
+            use_smoothed = False
+        else:
+            use_smoothed = True
+
         event_mask, baseline, std_dev = processor.robust_event_detection(
             w=config['signal_window'],
             k_up=config['k_up'],
             k_down=config['k_down'],
             influence=config['influence'],
-            run_min=config['run_min']
+            run_min=config['run_min'],
+            use_smoothed=use_smoothed
         )
         
         # Guardar resultados
         processed_signals[roi_name] = {
             'original': signal_data,
             'smoothed': smoothed,
+            'tf_filtered': tf_filtered,
             'event_mask': event_mask,
             'baseline': baseline,
             'std_dev': std_dev,
@@ -457,6 +495,14 @@ def main():
         elif 'last_config' in st.session_state:
             # Verificar si cambiaron parámetros importantes
             params_to_check = ['sg_window', 'sg_polyorder', 'signal_window', 'k_up', 'k_down', 'influence', 'run_min']
+            params_to_check.extend([
+                'tf_enabled',
+                'tf_filter_type',
+                'tf_filter_order',
+                'tf_cutoff_low',
+                'tf_cutoff_high',
+                'detection_signal_source'
+            ])
             for param in params_to_check:
                 if st.session_state.last_config.get(param) != config.get(param):
                     need_reprocess = True
@@ -498,6 +544,9 @@ def main():
     
     elif config['section'] == 'eda':
         render_eda_section(config, plotter)
+    
+    elif config['section'] == 'spectral':
+        render_spectral_analysis_section(config, plotter)
     
     elif config['section'] == 'conclusions':
         render_conclusions_section()

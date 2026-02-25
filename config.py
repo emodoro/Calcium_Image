@@ -17,6 +17,16 @@ DEFAULT_CSV_FILE = os.path.join(DEFAULT_EXPERIMENT_DIR, 'estimulos.csv')
 SG_WINDOW = 15          # Tamaño de ventana (debe ser impar)
 SG_POLYORDER = 3        # Orden del polinomio
 
+# Parámetros de filtrado por Transformada de Fourier (TF)
+TF_FILTER_ENABLED = False
+TF_FILTER_TYPE = 'bandpass'  # 'lowpass', 'highpass', 'bandpass', 'bandstop'
+TF_CUTOFF_LOW_HZ = 0.02
+TF_CUTOFF_HIGH_HZ = 0.30
+TF_FILTER_ORDER = 4
+
+# Señal usada para detección de eventos: 'sg', 'butterworth', 'original'
+DETECTION_SIGNAL_SOURCE = 'sg'
+
 # Parámetros para detección robusta de eventos en la señal
 SIGNAL_WINDOW = 20      # Ventana para cálculo de baseline móvil
 K_UP = 1.65             # Factor umbral para detección de subida
@@ -55,6 +65,7 @@ SECTIONS = {
     'origin': '📖 Origen de los Datos',
     'data_explanation': '📊 Explicación de la Data',
     'eda': '🔬 Análisis Exploratorio (EDA)',
+    'spectral': '🎵 Análisis Espectral',
     'conclusions': '💡 Conclusiones'
 }
 
