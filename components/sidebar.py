@@ -145,7 +145,7 @@ def render_sidebar():
                     step=max(float(max_freq) / 200.0, 0.01)
                 )
         
-        with st.expander("Detección de Eventos", expanded=False):
+        with st.expander("Detección de Eventos", expanded=True):
             detection_signal_source = st.selectbox(
                 "Señal para detección",
                 options=['sg', 'butterworth', 'original'],
@@ -155,7 +155,8 @@ def render_sidebar():
                     'original': 'Original'
                 }[x],
                 index=['sg', 'butterworth', 'original'].index(DETECTION_SIGNAL_SOURCE)
-                if DETECTION_SIGNAL_SOURCE in ['sg', 'butterworth', 'original'] else 0
+                if DETECTION_SIGNAL_SOURCE in ['sg', 'butterworth', 'original'] else 0,
+                key='detection_signal_source'
             )
 
             signal_window = st.slider(
