@@ -65,7 +65,8 @@ SECTIONS = {
     'data_explanation': '📊 Explicación de la Data',
     'eda': '🔬 Análisis Exploratorio (EDA)',
     'spectral': '🎵 Análisis Espectral',
-    'conclusions': '💡 Conclusiones'
+    'conclusions': '💡 Conclusiones',
+    'about': '👥 Quiénes Somos'
 }
 
 # ========== CONFIGURACIÓN DE DATOS ==========

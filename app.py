@@ -50,7 +50,8 @@ from components.sections import (
     render_data_explanation_section,
     render_eda_section,
     render_spectral_analysis_section,
-    render_conclusions_section
+    render_conclusions_section,
+    render_about_section
 )
 
 
@@ -548,6 +549,9 @@ def main():
     
     elif config['section'] == 'conclusions':
         render_conclusions_section()
+
+    elif config['section'] == 'about':
+        render_about_section()
     
     # ===== FOOTER =====
     st.markdown("---")
@@ -556,6 +560,8 @@ def main():
         <p><strong>Panel de Inteligencia - Imagen de Calcio Neuronal</strong></p>
         <p>Versión 1.0 | Febrero 2026</p>
         <p>Desarrollado con ❤️ usando Streamlit, Pandas, NumPy y Plotly</p>
+        <p><strong>Creado por:</strong> Dra. María Elena Hernando Pérez (<a href='mailto:mariaelena.hernando@uva.es'>mariaelena.hernando@uva.es</a>) y Dr. Enrique Pérez Riesgo (<a href='mailto:epercamh@gmail.com'>epercamh@gmail.com</a>)</p>
+        <p>Grupo de Fisiopatología del Calcio Intracelular, IBGM (CSIC-UVa). Dirección: Dr. Carlos Villalobos Jorge y Dra. Lucía Núñez Llorente.</p>
     </div>
     """, unsafe_allow_html=True)
 

@@ -938,6 +938,29 @@ def render_spectral_analysis_section(config, plotter):
     )
 
 
+def render_about_section():
+        """
+        Renderiza la sección de información del equipo creador de la app.
+        """
+        st.title("👥 Quiénes Somos")
+
+        st.markdown("""
+        Esta aplicación ha sido creada por:
+
+        - **Dra. María Elena Hernando Pérez**  
+            📧 **mariaelena.hernando@uva.es**
+        - **Dr. Enrique Pérez Riesgo**  
+            📧 **epercamh@gmail.com**
+        """)
+
+        st.markdown("---")
+
+        st.info("""
+        Ambos miembros del **Grupo de Fisiopatología del Calcio Intracelular** del **IBGM (CSIC-UVa)**,
+        dirigido por el **Dr. Carlos Villalobos Jorge** y la **Dra. Lucía Núñez Llorente**.
+        """)
+
+
 def render_conclusions_section():
     """
     Renderiza la sección de conclusiones.
